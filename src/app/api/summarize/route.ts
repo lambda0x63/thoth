@@ -106,11 +106,22 @@ export async function POST(request: NextRequest) {
           })}\n\n`));
           
           // Get transcript
-          const transcriptData: any = await info.getTranscript();
+          let transcriptData: any;
+          try {
+            transcriptData = await info.getTranscript();
+          } catch (transcriptError: any) {
+            console.log('Transcript error:', transcriptError.message);
+            controller.enqueue(encoder.encode(`data: ${JSON.stringify({ 
+              error: ERROR_MESSAGES.TRANSCRIPT_UNAVAILABLE[language],
+              errorCode: 'TRANSCRIPT_UNAVAILABLE'
+            })}\n\n`));
+            controller.close();
+            return;
+          }
           
           if (!transcriptData || !transcriptData.transcript || !transcriptData.transcript.content) {
             controller.enqueue(encoder.encode(`data: ${JSON.stringify({ 
-              error: ERROR_MESSAGES.TRANSCRIPT_UNAVAILABLE[language] || ERROR_MESSAGES.TRANSCRIPT_UNAVAILABLE.en,
+              error: ERROR_MESSAGES.TRANSCRIPT_UNAVAILABLE[language],
               errorCode: 'TRANSCRIPT_UNAVAILABLE'
             })}\n\n`));
             controller.close();
