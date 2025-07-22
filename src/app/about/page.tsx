@@ -15,7 +15,7 @@ export default function AboutPage() {
       await navigator.clipboard.writeText("lambda0x63@gmail.com");
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
-    } catch (err) {
+    } catch {
       window.location.href = "mailto:lambda0x63@gmail.com";
     }
   };
