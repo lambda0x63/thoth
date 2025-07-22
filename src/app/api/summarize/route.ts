@@ -92,28 +92,11 @@ export async function POST(request: NextRequest) {
             return;
           }
           
-          // Extract video metadata with fallbacks
-          console.log('Video info structure:', {
-            basic_info_keys: Object.keys(info.basic_info || {}),
-            title: info.basic_info?.title,
-            author: info.basic_info?.author,
-            channel: info.basic_info?.channel?.name,
-            viewCount: info.basic_info?.view_count,
-            duration: info.basic_info?.duration
-          });
-          
-          // Try multiple ways to get metadata
+          // Extract only essential metadata
           const title = info.basic_info?.title || info.primary_info?.title?.text || 'Unknown Title';
-          const author = info.basic_info?.author || info.basic_info?.channel?.name || info.secondary_info?.owner?.author?.name || 'Unknown Author';
-          const viewCount = info.basic_info?.view_count || '0';
           
           const metadata: VideoMetadata = {
-            title,
-            author,
-            duration: formatDuration(durationInSeconds),
-            thumbnail: info.basic_info?.thumbnail?.[0]?.url || '',
-            publishedAt: info.primary_info?.published?.text || '',
-            viewCount: typeof viewCount === 'number' ? viewCount.toLocaleString() : viewCount
+            title
           };
           
           // Send metadata first
@@ -394,14 +377,4 @@ export async function POST(request: NextRequest) {
   });
 }
 
-function formatDuration(seconds: number): string {
-  const hours = Math.floor(seconds / 3600);
-  const minutes = Math.floor((seconds % 3600) / 60);
-  const secs = seconds % 60;
-  
-  if (hours > 0) {
-    return `${hours}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
-  }
-  return `${minutes}:${secs.toString().padStart(2, '0')}`;
-}
 

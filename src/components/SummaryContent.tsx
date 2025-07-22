@@ -5,11 +5,10 @@ import { useSearchParams } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Copy, CheckCircle, Home, Loader2, ScrollText, AlertCircle, Clock, Eye, User } from "lucide-react";
+import { Copy, CheckCircle, Home, Loader2, ScrollText, AlertCircle } from "lucide-react";
 import Link from "next/link";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import Image from "next/image";
 import { summaryReducer, initialState } from "@/lib/summary-reducer";
 import { CACHE_DURATION_MS, STREAM_DEBOUNCE_MS } from "@/constants/config";
 
@@ -257,43 +256,11 @@ export function SummaryContent() {
           </p>
         </div>
 
-        {/* Video Metadata */}
+        {/* Video Title */}
         {metadata && (
-          <Card className="mb-6 shadow-md">
-            <CardContent className="p-4">
-              <div className="flex flex-col sm:flex-row gap-4">
-                {metadata.thumbnail && (
-                  <div className="relative w-full sm:w-48 h-32 sm:h-28 flex-shrink-0">
-                    <Image
-                      src={metadata.thumbnail}
-                      alt={metadata.title}
-                      fill
-                      className="object-cover rounded-md"
-                    />
-                  </div>
-                )}
-                <div className="flex-1 space-y-2">
-                  <h2 className="font-semibold text-lg line-clamp-2">{metadata.title}</h2>
-                  <div className="flex flex-wrap gap-3 text-sm text-muted-foreground">
-                    <span className="flex items-center gap-1">
-                      <User className="h-3 w-3" />
-                      {metadata.author}
-                    </span>
-                    <span className="flex items-center gap-1">
-                      <Clock className="h-3 w-3" />
-                      {metadata.duration}
-                    </span>
-                    {metadata.viewCount && (
-                      <span className="flex items-center gap-1">
-                        <Eye className="h-3 w-3" />
-                        {metadata.viewCount} {language === "ko" ? "회" : "views"}
-                      </span>
-                    )}
-                  </div>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
+          <div className="mb-6 text-center">
+            <h2 className="text-xl font-medium text-muted-foreground">{metadata.title}</h2>
+          </div>
         )}
 
         {error ? (
