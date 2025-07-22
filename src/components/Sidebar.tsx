@@ -21,7 +21,7 @@ export function Sidebar() {
 
   const menuItems = [
     { icon: Home, label: "홈", href: "/" },
-    { icon: Info, label: "서비스 소개", href: "#" },
+    { icon: Info, label: "서비스 소개", href: "/about" },
   ];
 
   const SidebarContent = ({ compact = false }: { compact?: boolean }) => (
