@@ -28,20 +28,32 @@ export function Sidebar() {
 
   const SidebarContent = ({ compact = false }: { compact?: boolean }) => (
     <>
-      {/* Logo Section */}
-      <div className={`flex items-center gap-3 mb-6 ${compact ? 'justify-center' : ''}`}>
-        <Image
-          src="/thoth_logo.png"
-          alt="THOTH"
-          width={40}
-          height={40}
-        />
-        {!compact && (
-          <div>
-            <h2 className="font-bold text-lg">THOTH</h2>
-            <p className="text-xs text-muted-foreground">지혜의 서기</p>
-          </div>
-        )}
+      {/* Logo Section with Toggle */}
+      <div className="flex items-center justify-between mb-6">
+        <div className={`flex items-center gap-3 ${compact ? 'justify-center' : ''}`}>
+          <Image
+            src="/thoth_logo.png"
+            alt="THOTH"
+            width={40}
+            height={40}
+          />
+          {!compact && (
+            <div>
+              <h2 className="font-bold text-lg">THOTH</h2>
+              <p className="text-xs text-muted-foreground">지혜의 서기</p>
+            </div>
+          )}
+        </div>
+        
+        {/* Desktop Toggle Button */}
+        <Button
+          variant="ghost"
+          size="icon"
+          className="hidden lg:flex h-8 w-8"
+          onClick={() => setIsCollapsed(!isCollapsed)}
+        >
+          <PanelLeftClose className="h-4 w-4" />
+        </Button>
       </div>
 
       <Separator className="mb-6" />
@@ -126,27 +138,29 @@ export function Sidebar() {
 
       {/* Desktop Sidebar */}
       <aside className={`hidden lg:flex fixed top-0 left-0 z-40 h-full bg-background border-r transition-all duration-300 ${
-        isCollapsed ? 'w-20' : 'w-64'
+        isCollapsed ? '-translate-x-full' : 'translate-x-0'
       }`}>
-        <div className="flex flex-col h-full p-6 relative">
-          {/* Toggle Button */}
-          <Button
-            variant="ghost"
-            size="icon"
-            className="absolute -right-4 top-6 z-50 h-8 w-8 rounded-full border bg-background shadow-md"
-            onClick={() => setIsCollapsed(!isCollapsed)}
-          >
-            {isCollapsed ? <PanelLeft className="h-4 w-4" /> : <PanelLeftClose className="h-4 w-4" />}
-          </Button>
-          
-          <SidebarContent compact={isCollapsed} />
+        <div className="flex flex-col h-full p-6 w-64">
+          <SidebarContent compact={false} />
         </div>
       </aside>
+
+      {/* Floating Open Button - Only when sidebar is closed */}
+      {isCollapsed && (
+        <Button
+          variant="outline"
+          size="icon"
+          className="hidden lg:flex fixed top-6 left-4 z-40 h-10 w-10 rounded-full shadow-lg"
+          onClick={() => setIsCollapsed(false)}
+        >
+          <Menu className="h-5 w-5" />
+        </Button>
+      )}
 
       {/* Update main content padding */}
       <style jsx global>{`
         main {
-          padding-left: ${isCollapsed ? '5rem' : '16rem'};
+          padding-left: ${isCollapsed ? '0' : '16rem'};
           transition: padding-left 0.3s;
         }
         @media (max-width: 1024px) {

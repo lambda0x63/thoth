@@ -21,6 +21,7 @@ export default function SummaryPage() {
   const [copied, setCopied] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
+  const hasStartedStreaming = useRef(false);
 
   useEffect(() => {
     if (!url) {
@@ -29,8 +30,38 @@ export default function SummaryPage() {
       return;
     }
 
+    // Check if we have a cached summary
+    const cacheKey = `summary_${url}_${language}`;
+    const cachedData = sessionStorage.getItem(cacheKey);
+    
+    if (cachedData) {
+      const { summary: cachedSummary, timestamp } = JSON.parse(cachedData);
+      // Use cache if it's less than 1 hour old
+      if (Date.now() - timestamp < 3600000) {
+        setSummary(cachedSummary);
+        setIsStreaming(false);
+        return;
+      }
+    }
+
+    // Check if streaming is already in progress
+    const streamingKey = `streaming_${url}_${language}`;
+    const isCurrentlyStreaming = sessionStorage.getItem(streamingKey);
+    
+    if (isCurrentlyStreaming === 'true') {
+      setError(language === 'ko' 
+        ? '이미 요약이 진행 중입니다. 잠시 후 다시 시도해주세요.' 
+        : 'Summary already in progress. Please try again later.');
+      setIsStreaming(false);
+      return;
+    }
+
     const fetchSummary = async () => {
       try {
+        // Mark as streaming
+        sessionStorage.setItem(streamingKey, 'true');
+        hasStartedStreaming.current = true;
+
         const response = await fetch("/api/summarize", {
           method: "POST",
           headers: {
@@ -59,6 +90,16 @@ export default function SummaryPage() {
               
               if (data === "[DONE]") {
                 setIsStreaming(false);
+                // Save completed summary to cache
+                if (summary) {
+                  const cacheKey = `summary_${url}_${language}`;
+                  sessionStorage.setItem(cacheKey, JSON.stringify({
+                    summary,
+                    timestamp: Date.now()
+                  }));
+                }
+                // Remove streaming flag
+                sessionStorage.removeItem(streamingKey);
                 break;
               }
 
@@ -87,11 +128,23 @@ export default function SummaryPage() {
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to fetch summary");
         setIsStreaming(false);
+        // Remove streaming flag on error
+        sessionStorage.removeItem(streamingKey);
+      } finally {
+        hasStartedStreaming.current = false;
       }
     };
 
     fetchSummary();
-  }, [url]);
+
+    // Cleanup on unmount
+    return () => {
+      if (hasStartedStreaming.current && url) {
+        const streamingKey = `streaming_${url}_${language}`;
+        sessionStorage.removeItem(streamingKey);
+      }
+    };
+  }, [url, language]);
 
   // Auto-scroll effect
   useEffect(() => {
