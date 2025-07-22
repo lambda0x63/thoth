@@ -1,14 +1,32 @@
 import { NextRequest } from 'next/server';
 import { Innertube } from 'youtubei.js/web';
 import { checkRateLimit } from '@/lib/rate-limit';
+import { validateYouTubeUrl } from '@/lib/youtube-validator';
+import { VideoMetadata } from '@/types/video';
+import { ERROR_MESSAGES } from '@/constants/errors';
 
 export async function POST(request: NextRequest) {
   const encoder = new TextEncoder();
   
   const stream = new ReadableStream({
     async start(controller) {
+      const abortController = new AbortController();
+      
+      // Handle connection abort
+      const handleAbort = () => {
+        console.log('Client disconnected, cleaning up...');
+        abortController.abort();
+        controller.close();
+      };
+      
+      request.signal.addEventListener('abort', handleAbort);
+      
+      let language: 'ko' | 'en' = 'ko';
+      
       try {
-        const { url, language = 'ko' } = await request.json();
+        const body = await request.json();
+        const { url } = body;
+        language = body.language || 'ko';
 
         // Check rate limit
         const rateLimit = await checkRateLimit(request);
@@ -34,9 +52,9 @@ export async function POST(request: NextRequest) {
           return;
         }
 
-        // Extract video ID from URL
-        const videoId = extractVideoId(url);
-        if (!videoId) {
+        // Validate and extract video ID from URL
+        const validation = validateYouTubeUrl(url);
+        if (!validation.valid || !validation.videoId) {
           controller.enqueue(encoder.encode(`data: ${JSON.stringify({ 
             error: language === 'ko' 
               ? '올바른 YouTube 주소가 아닙니다' 
@@ -45,6 +63,7 @@ export async function POST(request: NextRequest) {
           controller.close();
           return;
         }
+        const videoId = validation.videoId;
 
         // Send status update
         controller.enqueue(encoder.encode(`data: ${JSON.stringify({ 
@@ -58,14 +77,41 @@ export async function POST(request: NextRequest) {
           // Get video info
           const info = await youtube.getInfo(videoId);
           
+          // Check video duration (1 hour max for better quality)
+          const durationInSeconds = info.basic_info.duration || 0;
+          if (durationInSeconds > 3600) { // 60 minutes
+            controller.enqueue(encoder.encode(`data: ${JSON.stringify({ 
+              error: language === 'ko' 
+                ? '영상이 너무 깁니다. 1시간 이하의 영상을 선택해주세요.'
+                : 'Video is too long. Please choose a video under 1 hour.',
+              errorCode: 'VIDEO_TOO_LONG'
+            })}\n\n`));
+            controller.close();
+            return;
+          }
+          
+          // Extract video metadata
+          const metadata: VideoMetadata = {
+            title: info.basic_info.title || 'Unknown Title',
+            author: info.basic_info.author || 'Unknown Author',
+            duration: formatDuration(durationInSeconds),
+            thumbnail: info.basic_info.thumbnail?.[0]?.url || '',
+            publishedAt: info.primary_info?.published?.text || '',
+            viewCount: info.basic_info.view_count?.toLocaleString() || '0'
+          };
+          
+          // Send metadata first
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify({ 
+            metadata 
+          })}\n\n`));
+          
           // Get transcript
           const transcriptData: any = await info.getTranscript();
           
           if (!transcriptData || !transcriptData.transcript || !transcriptData.transcript.content) {
             controller.enqueue(encoder.encode(`data: ${JSON.stringify({ 
-              error: language === 'ko' 
-                ? '이 영상의 지혜를 읽을 수 없습니다' 
-                : 'Cannot read the wisdom from this video'
+              error: ERROR_MESSAGES.TRANSCRIPT_UNAVAILABLE[language] || ERROR_MESSAGES.TRANSCRIPT_UNAVAILABLE.en,
+              errorCode: 'TRANSCRIPT_UNAVAILABLE'
             })}\n\n`));
             controller.close();
             return;
@@ -121,8 +167,9 @@ export async function POST(request: NextRequest) {
               'HTTP-Referer': process.env.SITE_URL || 'http://localhost:3000',
               'X-Title': 'Thoth Video Summarizer',
             },
+            signal: abortController.signal,
             body: JSON.stringify({
-              model: 'google/gemini-2.5-flash',
+              model: 'google/gemini-2.5-flash-lite-preview-06-17',
               messages: [
                 {
                   role: 'system',
@@ -261,22 +308,50 @@ export async function POST(request: NextRequest) {
           } finally {
             reader.cancel();
           }
-        } catch (error) {
+        } catch (error: any) {
           console.error('Transcript fetch error:', error);
+          
+          // Determine specific error
+          let errorMessage: string = ERROR_MESSAGES.UNKNOWN_ERROR[language];
+          let errorCode = 'UNKNOWN_ERROR';
+          
+          if (error.message?.includes('private')) {
+            errorMessage = ERROR_MESSAGES.VIDEO_PRIVATE[language];
+            errorCode = 'VIDEO_PRIVATE';
+          } else if (error.message?.includes('not found')) {
+            errorMessage = ERROR_MESSAGES.VIDEO_NOT_FOUND[language];
+            errorCode = 'VIDEO_NOT_FOUND';
+          } else if (error.message?.includes('network')) {
+            errorMessage = ERROR_MESSAGES.NETWORK_ERROR[language];
+            errorCode = 'NETWORK_ERROR';
+          }
+          
           controller.enqueue(encoder.encode(`data: ${JSON.stringify({ 
-            error: language === 'ko' 
-              ? '영상을 읽는 중 문제가 발생했습니다' 
-              : 'Error reading the video'
+            error: errorMessage,
+            errorCode
           })}\n\n`));
           controller.close();
           return;
         }
 
         controller.close();
-      } catch (error) {
+      } catch (error: any) {
         console.error('Summarization error:', error);
-        controller.enqueue(encoder.encode(`data: ${JSON.stringify({ error: 'Failed to summarize video' })}\n\n`));
+        
+        // Don't send error if connection was aborted
+        if (error.name === 'AbortError') {
+          console.log('Request aborted by client');
+          return;
+        }
+        
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify({ 
+          error: ERROR_MESSAGES.UNKNOWN_ERROR[language],
+          errorCode: 'UNKNOWN_ERROR'
+        })}\n\n`));
         controller.close();
+      } finally {
+        // Clean up
+        request.signal.removeEventListener('abort', handleAbort);
       }
     },
   });
@@ -290,27 +365,14 @@ export async function POST(request: NextRequest) {
   });
 }
 
-function extractVideoId(url: string): string | null {
-  try {
-    const urlObj = new URL(url);
-    
-    // Check for youtube.com/watch?v=VIDEO_ID
-    if (urlObj.hostname.includes('youtube.com') && urlObj.pathname === '/watch') {
-      return urlObj.searchParams.get('v');
-    }
-    
-    // Check for youtu.be/VIDEO_ID
-    if (urlObj.hostname === 'youtu.be') {
-      return urlObj.pathname.slice(1);
-    }
-    
-    // Check for youtube.com/embed/VIDEO_ID
-    if (urlObj.hostname.includes('youtube.com') && urlObj.pathname.startsWith('/embed/')) {
-      return urlObj.pathname.slice(7);
-    }
-    
-    return null;
-  } catch (error) {
-    return null;
+function formatDuration(seconds: number): string {
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const secs = seconds % 60;
+  
+  if (hours > 0) {
+    return `${hours}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   }
+  return `${minutes}:${secs.toString().padStart(2, '0')}`;
 }
+

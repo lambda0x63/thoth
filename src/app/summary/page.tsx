@@ -5,23 +5,30 @@ import { useSearchParams } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Copy, CheckCircle, Home, Loader2, ScrollText, AlertCircle } from "lucide-react";
+import { Copy, CheckCircle, Home, Loader2, ScrollText, AlertCircle, Clock, Eye, User } from "lucide-react";
 import Link from "next/link";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { VideoMetadata } from "@/types/video";
+import Image from "next/image";
 
 export default function SummaryPage() {
   const searchParams = useSearchParams();
   const url = searchParams.get("url");
   const language = searchParams.get("lang") || "ko";
   const [summary, setSummary] = useState("");
+  const [displaySummary, setDisplaySummary] = useState("");
   const [status, setStatus] = useState("");
   const [error, setError] = useState("");
   const [isStreaming, setIsStreaming] = useState(true);
   const [copied, setCopied] = useState(false);
+  const [metadata, setMetadata] = useState<VideoMetadata | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const hasStartedStreaming = useRef(false);
+  const bufferRef = useRef("");
+  const updateTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const processedContentRef = useRef(new Set<string>());
 
   useEffect(() => {
     if (!url) {
@@ -35,10 +42,12 @@ export default function SummaryPage() {
     const cachedData = sessionStorage.getItem(cacheKey);
     
     if (cachedData) {
-      const { summary: cachedSummary, timestamp } = JSON.parse(cachedData);
+      const { summary: cachedSummary, metadata: cachedMetadata, timestamp } = JSON.parse(cachedData);
       // Use cache if it's less than 1 hour old
       if (Date.now() - timestamp < 3600000) {
         setSummary(cachedSummary);
+        setDisplaySummary(cachedSummary);
+        setMetadata(cachedMetadata);
         setIsStreaming(false);
         return;
       }
@@ -61,6 +70,10 @@ export default function SummaryPage() {
         // Mark as streaming
         sessionStorage.setItem(streamingKey, 'true');
         hasStartedStreaming.current = true;
+        
+        // Reset state for new request
+        bufferRef.current = "";
+        processedContentRef.current.clear();
 
         const response = await fetch("/api/summarize", {
           method: "POST",
@@ -76,44 +89,101 @@ export default function SummaryPage() {
 
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
+        let buffer = "";
 
         while (true) {
           const { done, value } = await reader.read();
           if (done) break;
 
-          const chunk = decoder.decode(value);
-          const lines = chunk.split("\n");
+          // Decode chunk and add to buffer
+          const chunk = decoder.decode(value, { stream: true });
+          buffer += chunk;
+
+          // Process complete lines
+          const lines = buffer.split("\n");
+          
+          // Keep the last potentially incomplete line in buffer
+          buffer = lines.pop() || "";
 
           for (const line of lines) {
+            // Skip empty lines
+            if (!line.trim()) continue;
+            
+            // Process SSE data lines
             if (line.startsWith("data: ")) {
-              const data = line.slice(6);
+              const data = line.slice(6).trim();
               
               if (data === "[DONE]") {
                 setIsStreaming(false);
+                // Final update to ensure all content is displayed
+                setDisplaySummary(bufferRef.current);
                 // Remove streaming flag
                 sessionStorage.removeItem(streamingKey);
                 break;
               }
 
-              try {
-                const parsed = JSON.parse(data);
-                
-                if (parsed.error) {
-                  setError(parsed.error);
-                  setIsStreaming(false);
-                  break;
+              if (data) {
+                try {
+                  const parsed = JSON.parse(data);
+                  
+                  if (parsed.error) {
+                    setError(parsed.error);
+                    setIsStreaming(false);
+                    break;
+                  }
+                  
+                  if (parsed.metadata) {
+                    setMetadata(parsed.metadata);
+                  }
+                  
+                  if (parsed.status) {
+                    setStatus(parsed.status);
+                  }
+                  
+                  if (parsed.content && typeof parsed.content === 'string') {
+                    // Create a unique key for this content chunk
+                    const contentKey = `${bufferRef.current.length}_${parsed.content.substring(0, 20)}`;
+                    
+                    // Check if we've already processed this exact content
+                    if (!processedContentRef.current.has(contentKey)) {
+                      processedContentRef.current.add(contentKey);
+                      
+                      // Only add content if it's truly new
+                      const newContent = parsed.content;
+                      bufferRef.current += newContent;
+                      setSummary(bufferRef.current);
+                      
+                      // Clear existing timer
+                      if (updateTimerRef.current) {
+                        clearTimeout(updateTimerRef.current);
+                      }
+                      
+                      // Debounced update for display
+                      updateTimerRef.current = setTimeout(() => {
+                        setDisplaySummary(bufferRef.current);
+                      }, 50);
+                    }
+                  }
+                } catch (e) {
+                  console.error("JSON parse error:", e, "Data:", data);
                 }
-                
-                if (parsed.status) {
-                  setStatus(parsed.status);
-                }
-                
-                if (parsed.content) {
-                  setSummary(prev => prev + parsed.content);
-                }
-              } catch (e) {
-                // Ignore parsing errors
               }
+            }
+          }
+        }
+        
+        // Process any remaining data in buffer
+        if (buffer && buffer.startsWith("data: ")) {
+          const data = buffer.slice(6).trim();
+          if (data && data !== "[DONE]") {
+            try {
+              const parsed = JSON.parse(data);
+              if (parsed.content) {
+                bufferRef.current += parsed.content;
+                setDisplaySummary(bufferRef.current);
+              }
+            } catch (e) {
+              console.error("Final buffer parse error:", e);
             }
           }
         }
@@ -135,6 +205,9 @@ export default function SummaryPage() {
         const streamingKey = `streaming_${url}_${language}`;
         sessionStorage.removeItem(streamingKey);
       }
+      if (updateTimerRef.current) {
+        clearTimeout(updateTimerRef.current);
+      }
     };
   }, [url, language]);
 
@@ -144,10 +217,11 @@ export default function SummaryPage() {
       const cacheKey = `summary_${url}_${language}`;
       sessionStorage.setItem(cacheKey, JSON.stringify({
         summary,
+        metadata,
         timestamp: Date.now()
       }));
     }
-  }, [isStreaming, summary, url, language]);
+  }, [isStreaming, summary, metadata, url, language]);
 
   // Auto-scroll effect
   useEffect(() => {
@@ -160,25 +234,64 @@ export default function SummaryPage() {
   }, [summary, isStreaming]);
 
   const handleCopy = async () => {
-    await navigator.clipboard.writeText(summary);
+    await navigator.clipboard.writeText(displaySummary);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
 
   return (
     <div className="min-h-screen flex flex-col items-center justify-center px-4 py-8">
-      <div className="w-full max-w-4xl">
+      <div className="w-full max-w-5xl">
         <div className="text-center mb-8">
           <h1 className="text-4xl font-bold tracking-tight mb-2">THOTH</h1>
           <p className="text-muted-foreground">
             {isStreaming 
               ? (language === "ko" ? "고대의 지혜를 전사하는 중..." : "Transcribing ancient wisdom...")
-              : (summary 
+              : (displaySummary 
                   ? (language === "ko" ? "지혜가 기록되었습니다" : "Your wisdom has been transcribed")
                   : (language === "ko" ? "지혜를 불러오는 중..." : "Loading wisdom...")
                 )}
           </p>
         </div>
+
+        {/* Video Metadata */}
+        {metadata && (
+          <Card className="mb-6 shadow-md">
+            <CardContent className="p-4">
+              <div className="flex flex-col sm:flex-row gap-4">
+                {metadata.thumbnail && (
+                  <div className="relative w-full sm:w-48 h-32 sm:h-28 flex-shrink-0">
+                    <Image
+                      src={metadata.thumbnail}
+                      alt={metadata.title}
+                      fill
+                      className="object-cover rounded-md"
+                    />
+                  </div>
+                )}
+                <div className="flex-1 space-y-2">
+                  <h2 className="font-semibold text-lg line-clamp-2">{metadata.title}</h2>
+                  <div className="flex flex-wrap gap-3 text-sm text-muted-foreground">
+                    <span className="flex items-center gap-1">
+                      <User className="h-3 w-3" />
+                      {metadata.author}
+                    </span>
+                    <span className="flex items-center gap-1">
+                      <Clock className="h-3 w-3" />
+                      {metadata.duration}
+                    </span>
+                    {metadata.viewCount && (
+                      <span className="flex items-center gap-1">
+                        <Eye className="h-3 w-3" />
+                        {metadata.viewCount} {language === "ko" ? "회" : "views"}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        )}
 
         {error ? (
           <Card className="shadow-xl border-destructive">
@@ -214,37 +327,67 @@ export default function SummaryPage() {
                   variant="outline"
                   size="icon"
                   onClick={handleCopy}
-                  title={language === "ko" ? "요약 복사" : "Copy summary"}
-                  disabled={!summary || isStreaming}
+                  aria-label={language === "ko" ? "요약 복사" : "Copy summary"}
+                  disabled={!displaySummary || isStreaming}
                 >
-                  {copied ? <CheckCircle className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+                  {copied ? <CheckCircle className="h-4 w-4" aria-hidden="true" /> : <Copy className="h-4 w-4" aria-hidden="true" />}
                 </Button>
               </div>
             </CardHeader>
             <CardContent>
               <ScrollArea className="h-[60vh] pr-4" ref={scrollRef}>
                 <div className="text-sm leading-relaxed" ref={contentRef}>
-                  {summary ? (
+                  {displaySummary ? (
                     <div className="prose prose-sm dark:prose-invert max-w-none">
                       <ReactMarkdown
                         remarkPlugins={[remarkGfm]}
                         components={{
-                        h1: ({ children }) => <h1 className="text-xl font-bold mb-4 mt-6">{children}</h1>,
-                        h2: ({ children }) => <h2 className="text-lg font-semibold mb-3 mt-5">{children}</h2>,
-                        h3: ({ children }) => <h3 className="text-base font-medium mb-2 mt-4">{children}</h3>,
-                        p: ({ children }) => <p className="mb-4 leading-relaxed">{children}</p>,
-                        ul: ({ children }) => <ul className="mb-4 ml-5 list-disc space-y-1">{children}</ul>,
-                        li: ({ children }) => <li className="leading-relaxed">{children}</li>,
-                        strong: ({ children }) => <strong className="font-semibold">{children}</strong>,
-                        blockquote: ({ children }) => (
-                          <blockquote className="border-l-4 border-primary/30 pl-4 italic my-4">
-                            {children}
-                          </blockquote>
-                        ),
-                      }}
-                    >
-                      {summary}
-                    </ReactMarkdown>
+                          h1: ({ children }) => <h1 className="text-2xl font-bold mb-4 mt-6 first:mt-0">{children}</h1>,
+                          h2: ({ children }) => <h2 className="text-xl font-semibold mb-3 mt-5">{children}</h2>,
+                          h3: ({ children }) => <h3 className="text-lg font-medium mb-2 mt-4">{children}</h3>,
+                          h4: ({ children }) => <h4 className="text-base font-medium mb-2 mt-3">{children}</h4>,
+                          h5: ({ children }) => <h5 className="text-sm font-medium mb-1 mt-2">{children}</h5>,
+                          h6: ({ children }) => <h6 className="text-sm font-medium mb-1 mt-2">{children}</h6>,
+                          p: ({ children }) => <p className="mb-4 leading-relaxed text-base">{children}</p>,
+                          ul: ({ children }) => <ul className="mb-4 ml-6 list-disc space-y-2">{children}</ul>,
+                          ol: ({ children }) => <ol className="mb-4 ml-6 list-decimal space-y-2">{children}</ol>,
+                          li: ({ children }) => <li className="leading-relaxed pl-1">{children}</li>,
+                          strong: ({ children }) => <strong className="font-semibold text-foreground">{children}</strong>,
+                          em: ({ children }) => <em className="italic">{children}</em>,
+                          code: ({ children, className }) => {
+                            const isInline = !className;
+                            return isInline ? (
+                              <code className="px-1.5 py-0.5 rounded bg-muted font-mono text-sm">{children}</code>
+                            ) : (
+                              <code className="block p-4 rounded-lg bg-muted font-mono text-sm overflow-x-auto">{children}</code>
+                            );
+                          },
+                          pre: ({ children }) => <pre className="mb-4 overflow-x-auto">{children}</pre>,
+                          blockquote: ({ children }) => (
+                            <blockquote className="border-l-4 border-primary/30 pl-4 italic my-4 text-muted-foreground">
+                              {children}
+                            </blockquote>
+                          ),
+                          hr: () => <hr className="my-6 border-border" />,
+                          a: ({ children, href }) => (
+                            <a href={href} className="text-primary underline hover:text-primary/80" target="_blank" rel="noopener noreferrer">
+                              {children}
+                            </a>
+                          ),
+                          table: ({ children }) => (
+                            <div className="mb-4 overflow-x-auto">
+                              <table className="min-w-full divide-y divide-border">{children}</table>
+                            </div>
+                          ),
+                          thead: ({ children }) => <thead className="bg-muted/50">{children}</thead>,
+                          tbody: ({ children }) => <tbody className="divide-y divide-border">{children}</tbody>,
+                          tr: ({ children }) => <tr>{children}</tr>,
+                          th: ({ children }) => <th className="px-4 py-2 text-left font-medium">{children}</th>,
+                          td: ({ children }) => <td className="px-4 py-2">{children}</td>,
+                        }}
+                      >
+                        {displaySummary}
+                      </ReactMarkdown>
                     </div>
                   ) : (
                     <div className="text-center text-muted-foreground">
@@ -266,6 +409,13 @@ export default function SummaryPage() {
             </Button>
           </Link>
         </div>
+      </div>
+      
+      {/* Screen reader announcements */}
+      <div role="status" aria-live="polite" aria-atomic="true" className="sr-only">
+        {isStreaming && status}
+        {!isStreaming && displaySummary && (language === "ko" ? "요약이 완료되었습니다" : "Summary complete")}
+        {copied && (language === "ko" ? "클립보드에 복사되었습니다" : "Copied to clipboard")}
       </div>
     </div>
   );

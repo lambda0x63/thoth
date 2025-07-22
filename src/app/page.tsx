@@ -36,10 +36,10 @@ export default function Home() {
               priority
             />
           </div>
-          <h1 className="text-6xl font-bold tracking-tight mb-2 flex items-center justify-center gap-3">
+          <h1 className="text-6xl font-bold tracking-tight mb-2">
             THOTH
           </h1>
-          <p className="text-muted-foreground flex items-center justify-center gap-2">
+          <p className="text-muted-foreground">
             YouTube Video Summarizer
           </p>
         </div>
