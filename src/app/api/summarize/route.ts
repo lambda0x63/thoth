@@ -69,8 +69,11 @@ export async function POST(request: NextRequest) {
           status: language === 'ko' ? '영상의 지혜를 읽는 중...' : 'Reading the wisdom...' 
         })}\n\n`));
 
-        // Initialize YouTube client
-        const youtube = await Innertube.create();
+        // Initialize YouTube client with options for better compatibility
+        const youtube = await Innertube.create({
+          cache: undefined,
+          generate_session_locally: true
+        });
         
         try {
           // Get video info
@@ -89,14 +92,28 @@ export async function POST(request: NextRequest) {
             return;
           }
           
-          // Extract video metadata
+          // Extract video metadata with fallbacks
+          console.log('Video info structure:', {
+            basic_info_keys: Object.keys(info.basic_info || {}),
+            title: info.basic_info?.title,
+            author: info.basic_info?.author,
+            channel: info.basic_info?.channel?.name,
+            viewCount: info.basic_info?.view_count,
+            duration: info.basic_info?.duration
+          });
+          
+          // Try multiple ways to get metadata
+          const title = info.basic_info?.title || info.primary_info?.title?.text || 'Unknown Title';
+          const author = info.basic_info?.author || info.basic_info?.channel?.name || info.secondary_info?.owner?.author?.name || 'Unknown Author';
+          const viewCount = info.basic_info?.view_count || info.primary_info?.view_count?.text || '0';
+          
           const metadata: VideoMetadata = {
-            title: info.basic_info.title || 'Unknown Title',
-            author: info.basic_info.author || 'Unknown Author',
+            title,
+            author,
             duration: formatDuration(durationInSeconds),
-            thumbnail: info.basic_info.thumbnail?.[0]?.url || '',
+            thumbnail: info.basic_info?.thumbnail?.[0]?.url || '',
             publishedAt: info.primary_info?.published?.text || '',
-            viewCount: info.basic_info.view_count?.toLocaleString() || '0'
+            viewCount: typeof viewCount === 'number' ? viewCount.toLocaleString() : viewCount
           };
           
           // Send metadata first
