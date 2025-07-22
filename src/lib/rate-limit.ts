@@ -10,13 +10,21 @@ class RateLimiter {
   private limits: Map<string, RateLimitEntry> = new Map();
   private readonly maxRequests: number;
   private readonly windowMs: number;
+  private cleanupTimer?: NodeJS.Timeout;
 
   constructor(maxRequests: number = 10, windowHours: number = 24) {
     this.maxRequests = maxRequests;
     this.windowMs = windowHours * 60 * 60 * 1000;
     
     // Clean up old entries every hour
-    setInterval(() => this.cleanup(), 60 * 60 * 1000);
+    this.cleanupTimer = setInterval(() => this.cleanup(), 60 * 60 * 1000);
+  }
+
+  destroy() {
+    if (this.cleanupTimer) {
+      clearInterval(this.cleanupTimer);
+      this.cleanupTimer = undefined;
+    }
   }
 
   async checkLimit(identifier: string): Promise<{ allowed: boolean; remaining: number; resetTime: number }> {

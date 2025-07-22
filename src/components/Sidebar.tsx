@@ -4,7 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import { Button } from "@/components/ui/button";
-import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Separator } from "@/components/ui/separator";
 import { 
   Home, 
@@ -12,9 +12,7 @@ import {
   Menu,
   Info,
   ChevronRight,
-  BookOpen,
-  PanelLeftClose,
-  PanelLeft
+  PanelLeftClose
 } from "lucide-react";
 
 export function Sidebar() {

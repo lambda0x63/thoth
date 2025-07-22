@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useReducer, useRef, useCallback } from "react";
 import { useSearchParams } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -9,80 +9,111 @@ import { Copy, CheckCircle, Home, Loader2, ScrollText, AlertCircle, Clock, Eye, 
 import Link from "next/link";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { VideoMetadata } from "@/types/video";
 import Image from "next/image";
+import { summaryReducer, initialState } from "@/lib/summary-reducer";
+import { CACHE_DURATION_MS, STREAM_DEBOUNCE_MS } from "@/constants/config";
 
 export default function SummaryPage() {
   const searchParams = useSearchParams();
   const url = searchParams.get("url");
   const language = searchParams.get("lang") || "ko";
-  const [summary, setSummary] = useState("");
-  const [displaySummary, setDisplaySummary] = useState("");
-  const [status, setStatus] = useState("");
-  const [error, setError] = useState("");
-  const [isStreaming, setIsStreaming] = useState(true);
-  const [copied, setCopied] = useState(false);
-  const [metadata, setMetadata] = useState<VideoMetadata | null>(null);
+  
+  const [state, dispatch] = useReducer(summaryReducer, initialState);
+  const { summary, displaySummary, metadata, status, error, isStreaming, copied } = state;
+  
+  // Refs
   const scrollRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
-  const hasStartedStreaming = useRef(false);
-  const bufferRef = useRef("");
   const updateTimerRef = useRef<NodeJS.Timeout | null>(null);
-  const processedContentRef = useRef(new Set<string>());
-  const fetchStartedRef = useRef(false);
+  const abortControllerRef = useRef<AbortController | null>(null);
+  const hasStartedRef = useRef(false);
 
+  // Handle copy action
+  const handleCopy = useCallback(async () => {
+    if (!displaySummary) return;
+    
+    try {
+      await navigator.clipboard.writeText(displaySummary);
+      dispatch({ type: 'SET_COPIED', payload: true });
+      setTimeout(() => dispatch({ type: 'SET_COPIED', payload: false }), 2000);
+    } catch (err) {
+      console.error('Failed to copy:', err);
+    }
+  }, [displaySummary]);
+
+  // Auto-scroll effect
+  useEffect(() => {
+    if (isStreaming && contentRef.current && scrollRef.current) {
+      const scrollElement = scrollRef.current.querySelector('[data-radix-scroll-area-viewport]');
+      if (scrollElement) {
+        scrollElement.scrollTop = scrollElement.scrollHeight;
+      }
+    }
+  }, [displaySummary, isStreaming]);
+
+  // Save completed summary to cache
+  useEffect(() => {
+    if (!isStreaming && summary && url && metadata) {
+      const cacheKey = `summary_${url}_${language}`;
+      sessionStorage.setItem(cacheKey, JSON.stringify({
+        summary,
+        metadata,
+        timestamp: Date.now()
+      }));
+    }
+  }, [isStreaming, summary, metadata, url, language]);
+
+  // Main fetch effect
   useEffect(() => {
     if (!url) {
-      setError("No URL provided");
-      setIsStreaming(false);
+      dispatch({ type: 'SET_ERROR', payload: 'No URL provided' });
       return;
     }
 
-    // Check if we have a cached summary
+    // Prevent double fetch in development
+    if (hasStartedRef.current) return;
+    hasStartedRef.current = true;
+
+    // Check cache first
     const cacheKey = `summary_${url}_${language}`;
     const cachedData = sessionStorage.getItem(cacheKey);
     
     if (cachedData) {
-      const { summary: cachedSummary, metadata: cachedMetadata, timestamp } = JSON.parse(cachedData);
-      // Use cache if it's less than 1 hour old
-      if (Date.now() - timestamp < 3600000) {
-        setSummary(cachedSummary);
-        setDisplaySummary(cachedSummary);
-        setMetadata(cachedMetadata);
-        setIsStreaming(false);
-        return;
+      try {
+        const { summary: cachedSummary, metadata: cachedMetadata, timestamp } = JSON.parse(cachedData);
+        // Use cache if less than expiration time
+        if (Date.now() - timestamp < CACHE_DURATION_MS) {
+          dispatch({ 
+            type: 'SET_CACHED_DATA', 
+            payload: { summary: cachedSummary, metadata: cachedMetadata } 
+          });
+          return;
+        }
+      } catch (err) {
+        console.error('Cache parse error:', err);
       }
     }
 
-    // Check if streaming is already in progress
+    // Check if already streaming
     const streamingKey = `streaming_${url}_${language}`;
-    const isCurrentlyStreaming = sessionStorage.getItem(streamingKey);
-    
-    if (isCurrentlyStreaming === 'true') {
-      setError(language === 'ko' 
-        ? '이미 요약이 진행 중입니다. 잠시 후 다시 시도해주세요.' 
-        : 'Summary already in progress. Please try again later.');
-      setIsStreaming(false);
+    if (sessionStorage.getItem(streamingKey) === 'true') {
+      dispatch({ 
+        type: 'SET_ERROR', 
+        payload: language === 'ko' 
+          ? '이미 요약이 진행 중입니다. 잠시 후 다시 시도해주세요.' 
+          : 'Summary already in progress. Please try again later.'
+      });
       return;
     }
-
-    // Prevent multiple fetches
-    if (fetchStartedRef.current) {
-      return;
-    }
-    fetchStartedRef.current = true;
 
     const fetchSummary = async () => {
+      // Create abort controller
+      abortControllerRef.current = new AbortController();
+      
       try {
         // Mark as streaming
         sessionStorage.setItem(streamingKey, 'true');
-        hasStartedStreaming.current = true;
-        
-        // Reset state for new request
-        bufferRef.current = "";
-        processedContentRef.current.clear();
-        setSummary("");
-        setDisplaySummary("");
+        dispatch({ type: 'START_STREAMING' });
 
         const response = await fetch("/api/summarize", {
           method: "POST",
@@ -90,6 +121,7 @@ export default function SummaryPage() {
             "Content-Type": "application/json",
           },
           body: JSON.stringify({ url, language }),
+          signal: abortControllerRef.current.signal,
         });
 
         if (!response.body) {
@@ -110,25 +142,18 @@ export default function SummaryPage() {
 
           // Process complete lines
           const lines = buffer.split("\n");
-          
-          // Keep the last potentially incomplete line in buffer
           buffer = lines.pop() || "";
 
           for (const line of lines) {
-            // Skip empty lines
             if (!line.trim()) continue;
             
-            // Process SSE data lines
             if (line.startsWith("data: ")) {
               const data = line.slice(6).trim();
               
               if (data === "[DONE]") {
-                setIsStreaming(false);
-                // Final update to ensure all content is displayed
-                setDisplaySummary(bufferRef.current);
-                // Remove streaming flag
+                dispatch({ type: 'COMPLETE_STREAMING' });
                 sessionStorage.removeItem(streamingKey);
-                break;
+                return;
               }
 
               if (data) {
@@ -136,32 +161,29 @@ export default function SummaryPage() {
                   const parsed = JSON.parse(data);
                   
                   if (parsed.error) {
-                    setError(parsed.error);
-                    setIsStreaming(false);
-                    break;
+                    dispatch({ type: 'SET_ERROR', payload: parsed.error });
+                    sessionStorage.removeItem(streamingKey);
+                    return;
                   }
                   
                   if (parsed.metadata) {
-                    setMetadata(parsed.metadata);
+                    dispatch({ type: 'SET_METADATA', payload: parsed.metadata });
                   }
                   
                   if (parsed.status) {
-                    setStatus(parsed.status);
+                    dispatch({ type: 'SET_STATUS', payload: parsed.status });
                   }
                   
                   if (parsed.content && typeof parsed.content === 'string') {
-                    // Simply append content without complex deduplication
-                    bufferRef.current += parsed.content;
+                    dispatch({ type: 'APPEND_CONTENT', payload: parsed.content });
                     
-                    // Clear existing timer
+                    // Debounced display update
                     if (updateTimerRef.current) {
                       clearTimeout(updateTimerRef.current);
                     }
-                    
-                    // Debounced update for display
                     updateTimerRef.current = setTimeout(() => {
-                      setDisplaySummary(bufferRef.current);
-                    }, 100);
+                      dispatch({ type: 'UPDATE_DISPLAY' });
+                    }, STREAM_DEBOUNCE_MS);
                   }
                 } catch (e) {
                   console.error("JSON parse error:", e, "Data:", data);
@@ -171,15 +193,15 @@ export default function SummaryPage() {
           }
         }
         
-        // Process any remaining data in buffer
+        // Process any remaining data
         if (buffer && buffer.startsWith("data: ")) {
           const data = buffer.slice(6).trim();
           if (data && data !== "[DONE]") {
             try {
               const parsed = JSON.parse(data);
               if (parsed.content) {
-                bufferRef.current += parsed.content;
-                setDisplaySummary(bufferRef.current);
+                dispatch({ type: 'APPEND_CONTENT', payload: parsed.content });
+                dispatch({ type: 'UPDATE_DISPLAY' });
               }
             } catch (e) {
               console.error("Final buffer parse error:", e);
@@ -187,57 +209,38 @@ export default function SummaryPage() {
           }
         }
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Failed to fetch summary");
-        setIsStreaming(false);
-        // Remove streaming flag on error
-        sessionStorage.removeItem(streamingKey);
+        if (err instanceof Error && err.name === 'AbortError') {
+          console.log('Fetch aborted');
+          return;
+        }
+        
+        dispatch({ 
+          type: 'SET_ERROR', 
+          payload: err instanceof Error ? err.message : "Failed to fetch summary" 
+        });
       } finally {
-        hasStartedStreaming.current = false;
+        sessionStorage.removeItem(streamingKey);
+        if (updateTimerRef.current) {
+          clearTimeout(updateTimerRef.current);
+        }
       }
     };
 
     fetchSummary();
 
-    // Cleanup on unmount
+    // Cleanup
     return () => {
-      fetchStartedRef.current = false;
-      if (hasStartedStreaming.current && url) {
-        const streamingKey = `streaming_${url}_${language}`;
-        sessionStorage.removeItem(streamingKey);
+      hasStartedRef.current = false;
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
       }
       if (updateTimerRef.current) {
         clearTimeout(updateTimerRef.current);
       }
+      const streamingKey = `streaming_${url}_${language}`;
+      sessionStorage.removeItem(streamingKey);
     };
   }, [url, language]);
-
-  // Save completed summary to cache
-  useEffect(() => {
-    if (!isStreaming && summary && url) {
-      const cacheKey = `summary_${url}_${language}`;
-      sessionStorage.setItem(cacheKey, JSON.stringify({
-        summary,
-        metadata,
-        timestamp: Date.now()
-      }));
-    }
-  }, [isStreaming, summary, metadata, url, language]);
-
-  // Auto-scroll effect
-  useEffect(() => {
-    if (isStreaming && contentRef.current && scrollRef.current) {
-      const scrollElement = scrollRef.current.querySelector('[data-radix-scroll-area-viewport]');
-      if (scrollElement) {
-        scrollElement.scrollTop = scrollElement.scrollHeight;
-      }
-    }
-  }, [summary, isStreaming]);
-
-  const handleCopy = async () => {
-    await navigator.clipboard.writeText(displaySummary);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  };
 
   return (
     <div className="min-h-screen flex flex-col items-center justify-center px-4 py-8">

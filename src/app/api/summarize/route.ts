@@ -31,7 +31,6 @@ export async function POST(request: NextRequest) {
         // Check rate limit
         const rateLimit = await checkRateLimit(request);
         if (!rateLimit.allowed) {
-          const resetDate = new Date(rateLimit.resetTime);
           const hours = Math.ceil((rateLimit.resetTime - Date.now()) / (1000 * 60 * 60));
           controller.enqueue(encoder.encode(`data: ${JSON.stringify({ 
             error: language === 'ko' 
@@ -106,11 +105,11 @@ export async function POST(request: NextRequest) {
           })}\n\n`));
           
           // Get transcript
-          let transcriptData: any;
+          let transcriptData: unknown;
           try {
             transcriptData = await info.getTranscript();
-          } catch (transcriptError: any) {
-            console.log('Transcript error:', transcriptError.message);
+          } catch (transcriptError) {
+            console.log('Transcript error:', transcriptError instanceof Error ? transcriptError.message : 'Unknown error');
             controller.enqueue(encoder.encode(`data: ${JSON.stringify({ 
               error: ERROR_MESSAGES.TRANSCRIPT_UNAVAILABLE[language],
               errorCode: 'TRANSCRIPT_UNAVAILABLE'
@@ -119,7 +118,8 @@ export async function POST(request: NextRequest) {
             return;
           }
           
-          if (!transcriptData || !transcriptData.transcript || !transcriptData.transcript.content) {
+          const transcript = transcriptData as { transcript?: { content?: { body?: { initial_segments?: unknown[] } } } };
+          if (!transcript || !transcript.transcript || !transcript.transcript.content) {
             controller.enqueue(encoder.encode(`data: ${JSON.stringify({ 
               error: ERROR_MESSAGES.TRANSCRIPT_UNAVAILABLE[language],
               errorCode: 'TRANSCRIPT_UNAVAILABLE'
@@ -129,10 +129,10 @@ export async function POST(request: NextRequest) {
           }
 
           // Extract text from transcript segments
-          const segments = transcriptData.transcript.content.body?.initial_segments || [];
-          const fullText = segments
-            .map((segment: any) => segment.snippet?.text || '')
-            .filter((text: string) => text.trim() !== '')
+          const segments = transcript.transcript?.content?.body?.initial_segments || [];
+          const fullText = (segments as Array<{ snippet?: { text?: string } }>)
+            .map((segment) => segment.snippet?.text || '')
+            .filter((text) => text.trim() !== '')
             .join(' ')
             .trim();
 
@@ -319,20 +319,21 @@ export async function POST(request: NextRequest) {
           } finally {
             reader.cancel();
           }
-        } catch (error: any) {
+        } catch (error) {
           console.error('Transcript fetch error:', error);
           
           // Determine specific error
           let errorMessage: string = ERROR_MESSAGES.UNKNOWN_ERROR[language];
           let errorCode = 'UNKNOWN_ERROR';
           
-          if (error.message?.includes('private')) {
+          const errorMsg = error instanceof Error ? error.message : String(error);
+          if (errorMsg.includes('private')) {
             errorMessage = ERROR_MESSAGES.VIDEO_PRIVATE[language];
             errorCode = 'VIDEO_PRIVATE';
-          } else if (error.message?.includes('not found')) {
+          } else if (errorMsg.includes('not found')) {
             errorMessage = ERROR_MESSAGES.VIDEO_NOT_FOUND[language];
             errorCode = 'VIDEO_NOT_FOUND';
-          } else if (error.message?.includes('network')) {
+          } else if (errorMsg.includes('network')) {
             errorMessage = ERROR_MESSAGES.NETWORK_ERROR[language];
             errorCode = 'NETWORK_ERROR';
           }
@@ -346,11 +347,11 @@ export async function POST(request: NextRequest) {
         }
 
         controller.close();
-      } catch (error: any) {
+      } catch (error) {
         console.error('Summarization error:', error);
         
         // Don't send error if connection was aborted
-        if (error.name === 'AbortError') {
+        if (error instanceof Error && error.name === 'AbortError') {
           console.log('Request aborted by client');
           return;
         }

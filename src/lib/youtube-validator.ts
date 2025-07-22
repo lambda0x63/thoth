@@ -35,7 +35,7 @@ export function validateYouTubeUrl(url: string): YouTubeValidationResult {
     }
 
     return { valid: false, error: 'Invalid YouTube URL format' };
-  } catch (error) {
+  } catch {
     return { valid: false, error: 'Error validating URL' };
   }
 }
