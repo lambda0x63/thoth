@@ -205,14 +205,14 @@ export async function POST(request: NextRequest) {
                     ? `실제 학생이 강의를 들으면서 노트에 정리하듯이 요약하세요. 명사형 종결어미 사용.
 
 📜 **핵심 요약**
-- 전체 내용의 핵심을 2-3문장으로 정리
+- 전체 내용의 핵심을 정리
 - 명사형 종결 (~임, ~함, ~이다)
 
 🔑 **주요 개념**
 • 중요 개념 1: 설명
 • 중요 개념 2: 설명
 • 중요 개념 3: 설명
-- 각 항목은 간결하게, 핵심만 기록
+- 각 항목은 영상의 내용을 기반으로한 핵심만 기록
 
 💡 **핵심 통찰**
 - 이 내용에서 얻을 수 있는 중요한 시사점
@@ -221,7 +221,7 @@ export async function POST(request: NextRequest) {
 
 📌 **기억할 내용**
 - 꼭 기억해야 할 핵심 문장이나 개념
-- 있는 그대로 인용하거나 핵심만 정리`
+- 있는 그대로 인용하거나 핵심을 정리`
                     : `Summarize like a student taking notes in class. Use concise, factual language.
 
 📜 **Core Summary**
