@@ -105,7 +105,7 @@ export async function POST(request: NextRequest) {
           // Try multiple ways to get metadata
           const title = info.basic_info?.title || info.primary_info?.title?.text || 'Unknown Title';
           const author = info.basic_info?.author || info.basic_info?.channel?.name || info.secondary_info?.owner?.author?.name || 'Unknown Author';
-          const viewCount = info.basic_info?.view_count || info.primary_info?.view_count?.text || '0';
+          const viewCount = info.basic_info?.view_count || '0';
           
           const metadata: VideoMetadata = {
             title,
@@ -252,7 +252,7 @@ export async function POST(request: NextRequest) {
               ],
               stream: true,
               temperature: 0.7,
-              max_tokens: 2048
+              max_tokens: 4096
             }),
           });
 
