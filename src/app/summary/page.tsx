@@ -29,6 +29,7 @@ export default function SummaryPage() {
   const bufferRef = useRef("");
   const updateTimerRef = useRef<NodeJS.Timeout | null>(null);
   const processedContentRef = useRef(new Set<string>());
+  const fetchStartedRef = useRef(false);
 
   useEffect(() => {
     if (!url) {
@@ -65,6 +66,12 @@ export default function SummaryPage() {
       return;
     }
 
+    // Prevent multiple fetches
+    if (fetchStartedRef.current) {
+      return;
+    }
+    fetchStartedRef.current = true;
+
     const fetchSummary = async () => {
       try {
         // Mark as streaming
@@ -74,6 +81,8 @@ export default function SummaryPage() {
         // Reset state for new request
         bufferRef.current = "";
         processedContentRef.current.clear();
+        setSummary("");
+        setDisplaySummary("");
 
         const response = await fetch("/api/summarize", {
           method: "POST",
@@ -141,28 +150,18 @@ export default function SummaryPage() {
                   }
                   
                   if (parsed.content && typeof parsed.content === 'string') {
-                    // Create a unique key for this content chunk
-                    const contentKey = `${bufferRef.current.length}_${parsed.content.substring(0, 20)}`;
+                    // Simply append content without complex deduplication
+                    bufferRef.current += parsed.content;
                     
-                    // Check if we've already processed this exact content
-                    if (!processedContentRef.current.has(contentKey)) {
-                      processedContentRef.current.add(contentKey);
-                      
-                      // Only add content if it's truly new
-                      const newContent = parsed.content;
-                      bufferRef.current += newContent;
-                      setSummary(bufferRef.current);
-                      
-                      // Clear existing timer
-                      if (updateTimerRef.current) {
-                        clearTimeout(updateTimerRef.current);
-                      }
-                      
-                      // Debounced update for display
-                      updateTimerRef.current = setTimeout(() => {
-                        setDisplaySummary(bufferRef.current);
-                      }, 50);
+                    // Clear existing timer
+                    if (updateTimerRef.current) {
+                      clearTimeout(updateTimerRef.current);
                     }
+                    
+                    // Debounced update for display
+                    updateTimerRef.current = setTimeout(() => {
+                      setDisplaySummary(bufferRef.current);
+                    }, 100);
                   }
                 } catch (e) {
                   console.error("JSON parse error:", e, "Data:", data);
@@ -201,6 +200,7 @@ export default function SummaryPage() {
 
     // Cleanup on unmount
     return () => {
+      fetchStartedRef.current = false;
       if (hasStartedStreaming.current && url) {
         const streamingKey = `streaming_${url}_${language}`;
         sessionStorage.removeItem(streamingKey);
