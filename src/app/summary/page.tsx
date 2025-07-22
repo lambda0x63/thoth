@@ -90,14 +90,6 @@ export default function SummaryPage() {
               
               if (data === "[DONE]") {
                 setIsStreaming(false);
-                // Save completed summary to cache
-                if (summary) {
-                  const cacheKey = `summary_${url}_${language}`;
-                  sessionStorage.setItem(cacheKey, JSON.stringify({
-                    summary,
-                    timestamp: Date.now()
-                  }));
-                }
                 // Remove streaming flag
                 sessionStorage.removeItem(streamingKey);
                 break;
@@ -146,6 +138,17 @@ export default function SummaryPage() {
     };
   }, [url, language]);
 
+  // Save completed summary to cache
+  useEffect(() => {
+    if (!isStreaming && summary && url) {
+      const cacheKey = `summary_${url}_${language}`;
+      sessionStorage.setItem(cacheKey, JSON.stringify({
+        summary,
+        timestamp: Date.now()
+      }));
+    }
+  }, [isStreaming, summary, url, language]);
+
   // Auto-scroll effect
   useEffect(() => {
     if (isStreaming && contentRef.current && scrollRef.current) {
@@ -170,7 +173,10 @@ export default function SummaryPage() {
           <p className="text-muted-foreground">
             {isStreaming 
               ? (language === "ko" ? "고대의 지혜를 전사하는 중..." : "Transcribing ancient wisdom...")
-              : (language === "ko" ? "지혜가 기록되었습니다" : "Your wisdom has been transcribed")}
+              : (summary 
+                  ? (language === "ko" ? "지혜가 기록되었습니다" : "Your wisdom has been transcribed")
+                  : (language === "ko" ? "지혜를 불러오는 중..." : "Loading wisdom...")
+                )}
           </p>
         </div>
 
@@ -197,7 +203,10 @@ export default function SummaryPage() {
             <CardHeader className="flex flex-row items-center justify-between">
               <CardTitle className="flex items-center gap-2">
                 <ScrollText className="h-5 w-5" />
-                {status || (language === "ko" ? "기록" : "Transcript")}
+                {isStreaming 
+                  ? (status || (language === "ko" ? "기록 중..." : "Recording..."))
+                  : (language === "ko" ? "기록 완료" : "Recording Complete")
+                }
                 {isStreaming && <Loader2 className="ml-2 h-4 w-4 animate-spin" />}
               </CardTitle>
               <div className="flex gap-2">

@@ -40,7 +40,6 @@ export function Sidebar() {
           {!compact && (
             <div>
               <h2 className="font-bold text-lg">THOTH</h2>
-              <p className="text-xs text-muted-foreground">지혜의 서기</p>
             </div>
           )}
         </div>
@@ -103,10 +102,9 @@ export function Sidebar() {
         <Separator className="mb-6" />
         <div className={`text-center text-xs text-muted-foreground space-y-1 ${compact ? '' : ''}`}>
           <p className="flex items-center justify-center gap-1">
-            <BookOpen className="h-3 w-3" />
-            {!compact && '© 2024 THOTH'}
+            {!compact && '© 2025 THOTH'}
           </p>
-          {!compact && <p>Ancient wisdom, Modern videos</p>}
+          {!compact && <p>Record wisdom from Modern videos</p>}
         </div>
       </div>
     </>
