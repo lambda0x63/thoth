@@ -1,5 +1,7 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
+import { Analytics } from "@vercel/analytics/react";
+import { SpeedInsights } from "@vercel/speed-insights/next";
 import { Sidebar } from "@/components/Sidebar";
 import "./globals.css";
 
@@ -35,6 +37,8 @@ export default function RootLayout({
         <main className="lg:pl-64">
           {children}
         </main>
+        <Analytics />
+        <SpeedInsights />
       </body>
     </html>
   );
