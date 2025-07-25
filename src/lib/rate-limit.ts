@@ -1,12 +1,65 @@
-// Simple in-memory rate limiting for production
-// In a real production app, you'd want Redis or a proper rate limiting service
+import { kv } from '@vercel/kv';
 
 interface RateLimitEntry {
   count: number;
   resetTime: number;
 }
 
-class RateLimiter {
+class KVRateLimiter {
+  private readonly maxRequests: number;
+  private readonly windowMs: number;
+
+  constructor(maxRequests: number = 10, windowHours: number = 24) {
+    this.maxRequests = maxRequests;
+    this.windowMs = windowHours * 60 * 60 * 1000;
+  }
+
+  async checkLimit(identifier: string): Promise<{ allowed: boolean; remaining: number; resetTime: number }> {
+    const now = Date.now();
+    const key = `rate_limit:${identifier}`;
+    
+    try {
+      const entry = await kv.get<RateLimitEntry>(key);
+
+      if (!entry || now > entry.resetTime) {
+        // New window
+        const resetTime = now + this.windowMs;
+        const newEntry: RateLimitEntry = { count: 1, resetTime };
+        
+        // Set with TTL (expires when window resets)
+        await kv.set(key, newEntry, { pxat: resetTime });
+        
+        return { allowed: true, remaining: this.maxRequests - 1, resetTime };
+      }
+
+      if (entry.count >= this.maxRequests) {
+        return { allowed: false, remaining: 0, resetTime: entry.resetTime };
+      }
+
+      // Increment count
+      const updatedEntry: RateLimitEntry = { 
+        count: entry.count + 1, 
+        resetTime: entry.resetTime 
+      };
+      
+      // Update with same TTL
+      await kv.set(key, updatedEntry, { pxat: entry.resetTime });
+      
+      return { 
+        allowed: true, 
+        remaining: this.maxRequests - updatedEntry.count, 
+        resetTime: entry.resetTime 
+      };
+    } catch (error) {
+      console.error('KV rate limiter error:', error);
+      // Fallback: allow request if KV fails
+      return { allowed: true, remaining: this.maxRequests - 1, resetTime: now + this.windowMs };
+    }
+  }
+}
+
+// Fallback in-memory rate limiter for development
+class MemoryRateLimiter {
   private limits: Map<string, RateLimitEntry> = new Map();
   private readonly maxRequests: number;
   private readonly windowMs: number;
@@ -57,8 +110,10 @@ class RateLimiter {
   }
 }
 
-// Create a singleton instance
-const rateLimiter = new RateLimiter(10, 24); // 10 requests per 24 hours
+// Create appropriate rate limiter based on environment
+const rateLimiter = process.env.NODE_ENV === 'production' && process.env.KV_URL
+  ? new KVRateLimiter(10, 24)
+  : new MemoryRateLimiter(10, 24);
 
 export async function checkRateLimit(req: Request): Promise<{ 
   allowed: boolean; 
@@ -66,7 +121,6 @@ export async function checkRateLimit(req: Request): Promise<{
   resetTime: number;
   identifier: string;
 }> {
-  // In production (Vercel), use IP address as identifier
   // In development, always allow
   if (process.env.NODE_ENV === 'development') {
     return { allowed: true, remaining: 999, resetTime: 0, identifier: 'dev' };
