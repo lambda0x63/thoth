@@ -41,13 +41,16 @@
 - 내부 영상 분석 유틸리티
 
 ## 환경설정
+```bash
 npm install
 npm run dev
+```
 
-.env
+```env
 API_ENDPOINT_URL="..."
 API_KEY="..."
 KV_URL="..."
 KV_REST_API_URL="..."
 KV_REST_API_TOKEN="..."
 KV_REST_API_READ_ONLY_TOKEN="..."
+```
